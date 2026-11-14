@@ -1,0 +1,2 @@
+import fs from'node:fs/promises';
+const r=await fetch('https://raw.githubusercontent.com/nodejs/node/v24.x/LICENSE',{signal:AbortSignal.timeout(30000)});if(!r.ok)throw Error('Node license HTTP '+r.status);const body=await r.text();if(body.length>500000||!body.includes('Node.js is licensed'))throw Error('Unexpected license response');await fs.mkdir('licenses',{recursive:true});await fs.writeFile('licenses/Node-LICENSE.txt',body);console.log('Node license saved');
