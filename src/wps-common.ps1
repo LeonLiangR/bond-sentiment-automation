@@ -34,6 +34,32 @@ function Open-OwnedSpreadsheet([string]$TrackerDirectory){
  }
 }
 function Open-OwnedWps([string]$TrackerDirectory){return Open-OwnedSpreadsheet $TrackerDirectory}
+function Get-WindPendingFields($Rows){
+ foreach($row in $Rows){
+  foreach($key in @('code','issuer','guarantor','windType','term','option','green','science','subordinate','issueDate','paymentDate','bookrunner')){
+   $value=$row.$key;$text=([string]$value).Trim()
+   # Excel Value2 exposes VT_ERROR cells as signed HRESULT numbers, not just # text.
+   $excelError=$value -is [System.Runtime.InteropServices.ErrorWrapper] -or ($value -is [ValueType] -and $value -isnot [bool] -and [double]$value -ge -2146826288 -and [double]$value -le -2146826245)
+   if($excelError -or $text -match '^(?i:Fetching|Loading|Pending|#)' -or ($key -eq 'code' -and $text -notmatch '^\d{6,9}\.(IB|SH|SZ)$') -or ($key -in @('issuer','windType') -and ($value -isnot [string] -or $text -eq '0')) -or ($key -in @('issuer','windType','term','option','green','science','subordinate') -and ($null -eq $value -or $text -eq ''))){
+    '{0}/{1}: {2}' -f $row.sampleId,$key,$text
+   }
+  }
+ }
+}
+function Wait-WindRows([scriptblock]$ReadRows,[int]$ExpectedCount,[ValidateRange(1,240)][int]$TimeoutSeconds=120,[ValidateRange(50,5000)][int]$PollMilliseconds=1000){
+ $clock=[Diagnostics.Stopwatch]::StartNew();$previous='';$readyBefore=$false;$problems=@()
+ while($clock.Elapsed.TotalSeconds -lt $TimeoutSeconds){
+  $rows=@(& $ReadRows);$problems=@(Get-WindPendingFields $rows)
+  if($rows.Count -ne $ExpectedCount){$problems+='Unexpected row count'}
+  $json=ConvertTo-Json -InputObject @($rows) -Depth 5
+  $ready=$rows.Count -gt 0 -and $problems.Count -eq 0
+  if($ready -and $readyBefore -and $json -eq $previous){return [pscustomobject]@{rows=$rows;json=$json;stable=$true;elapsedSeconds=$clock.Elapsed.TotalSeconds}}
+  $readyBefore=$ready;$previous=$json
+  Start-Sleep -Milliseconds $PollMilliseconds
+ }
+ if(-not $problems.Count){$problems=@('Results did not stabilize')}
+ throw ('Wind data timeout after '+$TimeoutSeconds+'s; pending or invalid fields: '+(($problems|Select-Object -First 8) -join '; '))
+}
 function Matrix($Rows){$count=$Rows.Count;$cols=$Rows[0].Count;$matrix=New-Object 'object[,]' $count,$cols;for($i=0;$i -lt $count;$i++){for($j=0;$j -lt $cols;$j++){$matrix[$i,$j]=$Rows[$i][$j]}};return ,$matrix}
 function Write-Block($Sheet,[string]$Cell,$Rows,[bool]$Formula=$false){if(-not $Rows -or -not $Rows.Count){return};$range=$Sheet.Range($Cell).Resize($Rows.Count,$Rows[0].Count);$matrix=Matrix $Rows;if($Formula){$range.Formula=$matrix}else{$range.Value2=$matrix}}
 function Close-OwnedSpreadsheet($Application,$Book){

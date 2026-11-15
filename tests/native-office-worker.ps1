@@ -1,5 +1,6 @@
-param([string]$SettingsFile,[string]$InputFile,[string]$OutputDirectory,[int]$TimeoutSeconds=120,[switch]$SkipWind)
+param([string]$SettingsFile,[string]$InputFile,[string]$OutputDirectory,[int]$TimeoutSeconds=150,[switch]$SkipWind)
 $ErrorActionPreference='Stop'
+$SettingsFile=[IO.Path]::GetFullPath($SettingsFile);$InputFile=if($InputFile){[IO.Path]::GetFullPath($InputFile)}else{''};$OutputDirectory=[IO.Path]::GetFullPath($OutputDirectory)
 . (Join-Path $PSScriptRoot '../src/wps-common.ps1')
 $settings=Get-Content -LiteralPath $SettingsFile -Raw -Encoding UTF8|ConvertFrom-Json
 $engine=if($settings.spreadsheetEngine){$settings.spreadsheetEngine}else{'wps'}
@@ -24,7 +25,7 @@ $a=$null;$b=$null;try{$a=Open-OwnedSpreadsheet $p.directory;$b=$a.Workbooks.Add(
  }
  $start=New-Object Diagnostics.ProcessStartInfo;$start.FileName='powershell.exe';$start.Arguments='-NoProfile -NonInteractive -EncodedCommand '+[Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($code));$start.UseShellExecute=$false;$start.CreateNoWindow=$true;$start.RedirectStandardOutput=$true;$start.RedirectStandardError=$true
  $worker=[Diagnostics.Process]::Start($start);$stdout=$worker.StandardOutput.ReadToEndAsync();$stderr=$worker.StandardError.ReadToEndAsync();if(-not $worker.WaitForExit($TimeoutSeconds*1000)){$worker.Kill();throw 'Wind check timeout'}
- if($worker.ExitCode -ne 0){throw $stderr.Result};$rows=@();if(-not $SkipWind){$rows=Get-Content -LiteralPath $output -Raw -Encoding UTF8|ConvertFrom-Json;if(-not @($rows|Where-Object {$_.code -match '^\d{6,9}\.(IB|SH|SZ)$' -and $_.issuer -is [string]}).Count){throw 'Wind returned no valid code or issuer'}}
+ if($worker.ExitCode -ne 0){throw $stderr.Result};$rows=@();if(-not $SkipWind){$rows=Get-Content -LiteralPath $output -Raw -Encoding UTF8|ConvertFrom-Json;$expected=Get-Content -LiteralPath $InputFile -Raw -Encoding UTF8|ConvertFrom-Json;if($rows.Count -ne $expected.Count -or @(Get-WindPendingFields $rows).Count){throw 'Wind returned incomplete or invalid rows'}}
  $preserved=$sentinel.Visible -eq $initial.visible -and $sentinel.DisplayAlerts -eq $initial.alerts -and $sentinel.Calculation -eq $initial.calculation -and $sentinel.ActiveWorkbook.Name -eq $initial.workbook -and $sentinel.Workbooks.Count -eq 1 -and $sheet.Range('A1').Value2 -eq 'native-preservation-sentinel' -and $sheet.Range('G3').Value2 -eq 123456
  if(-not $preserved){throw 'Existing workbook changed'}
  [ordered]@{passed=$true;kind='native';engine=$engine;windTested=(-not $SkipWind);windRows=$rows.Count;validCodes=@($rows|Where-Object {$_.code -match '^\d{6,9}\.(IB|SH|SZ)$'}).Count;preExistingWorkbookPreserved=$preserved;sentinelPid=$initial.pid;workerOutput=$stdout.Result}|ConvertTo-Json -Depth 4|Set-Content -LiteralPath (Join-Path $OutputDirectory 'native-verification.json') -Encoding UTF8

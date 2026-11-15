@@ -2,7 +2,18 @@
 
 从Releases下载Windows x64测试包，完整解压到本机目录，双击“一级市场情绪指数.exe”。不需要安装Python、Node或Codex。
 
-准备Windows 10/11 64位、.NET Framework 4.8，以及DM、DQ、Microsoft Excel和Excel版Wind插件。Excel模式不要求安装WPS。各账号需有相应数据、批量试算及下载权限。Excel分支仍待实机验收，本包用于完成这一步。
+准备Windows 10/11 64位、.NET Framework 4.8，以及DM、DQ、Microsoft Excel和Excel版Wind插件。Excel模式不要求安装WPS。各账号需有相应数据、批量试算及下载权限。
+
+2026-11-15已在Excel 16.0及Excel版Wind插件上验证独立隐藏实例取数、基础公式、保存重开及原有工作簿保护。Excel取数使用自动计算和完整重算，所有返回字段排除Fetching及Excel错误后连续两次一致才输出；默认等待120秒，超时报告样本ID及字段，不输出未完成数据。此验证不包含本机缺失的DM/DQ，也不代表完整五页报表已实机验收。
+
+无需DM/DQ时，可只验收Excel/Wind。准备settings.json（spreadsheetEngine=excel、excelExe为本机Excel绝对路径，dmExe和dqExe可填不存在的占位路径）以及input.json（样本数组，每项含sampleId和债券简称name），执行：
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File tests/wind-wait.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File tests/native-office-worker.ps1 -SettingsFile <settings.json路径> -InputFile <input.json路径> -OutputDirectory <测试输出目录> -TimeoutSeconds 150
+```
+
+加-SkipWind可只测试基础Excel。native-verification.json的passed、windTested及preExistingWorkbookPreserved应为true，并核对wind-live.json中的逐项结果。
 
 1. 先确认原客户端和Excel里的Wind函数能正常取数。
 2. 首次启动自动检测路径。设置中选Microsoft Excel，核对EXCEL.EXE、DM和DQ位置并保存。重新打开后应保持选择，不反复检测。

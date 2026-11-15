@@ -14,7 +14,7 @@
     "scripts/build-desktop.ps1", "scripts/release-common.ps1", "scripts/export-source.ps1",
     "tools/privacy_guard.py", "release-files.json", "README.md", "PORTABLE-README.txt", "package.json", ".gitignore",
     "docs/EXCEL-TESTING.md", "tests/core.test.mjs", "tests/office-config.test.mjs", "tests/narrative.test.mjs",
-    "tests/office-contract.ps1", "tests/DesktopOfficeChecks.cs", "tests/native-office-worker.ps1"
+    "tests/office-contract.ps1", "tests/DesktopOfficeChecks.cs", "tests/native-office-worker.ps1", "tests/wind-wait.ps1"
   ],
   "templates": ["templates/dq-upload.xlsx", "templates/report-five.xlsx"]
 }
