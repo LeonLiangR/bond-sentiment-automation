@@ -27,6 +27,7 @@
     "src/history-transfer.mjs"
   ],
   "source": [
+    ".github/workflows/release.yml",
     "src/Plot.cs",
     "src/desktop/AssemblyInfo.cs",
     "src/desktop/DesktopDialogs.cs",

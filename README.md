@@ -44,6 +44,8 @@ powershell -NoProfile -ExecutionPolicy Bypass -File src/package-portable.ps1 -No
 
 0.5.3口径澄清：六档权重仅用于老指数（按只数累加）；新指数保留原斜坡逐券得分，±3BP均得0分，E15=50+25×当日平均得分。老指数统计时，−3BP归入低估值3—5BP，＋3BP归入高估值3—5BP；平估值档为−3<x<3。
 
+维护者提交版本更新后，推送与 `package.json` 一致的版本标签（例如 `v0.5.8`）。GitHub Actions 会构建公开 ZIP、上传校验文件并发布 Release。日常源码推送不会发布版本。
+
 内部交接如需随包预置已授权的历史，可以改用 `-HistorySeedFile`。该选项与 `-PublicRelease` 互斥，生成带 `-internal` 后缀的 ZIP，仅限团队内部使用。
 
 0.5.4修复Excel.Application名称重定向：Excel改用固定CLSID激活，保留真实进程和安装路径核验，不改系统注册表。本次Excel启动修复尚需同事电脑实机验收。

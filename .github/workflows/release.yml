@@ -1,0 +1,73 @@
+name: Publish Windows release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: read
+
+jobs:
+  package:
+    runs-on: windows-2022
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Build and check the public ZIP
+        id: package
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $version = (Get-Content package.json -Raw | ConvertFrom-Json).version
+          if ($version -notmatch '^\d+\.\d+\.\d+$' -or $env:GITHUB_REF_NAME -ne "v$version") {
+            throw 'The version tag must match package.json'
+          }
+          $nodeDirectory = Split-Path -Parent (Get-Command node.exe).Source
+          $details = powershell.exe -NoProfile -ExecutionPolicy Bypass -File src/package-portable.ps1 -NodeBinDirectory $nodeDirectory -PublicRelease | Select-Object -Last 1 | ConvertFrom-Json
+          if ($LASTEXITCODE -ne 0 -or !$details.zip) { throw 'Public ZIP build failed' }
+          $metadata = Get-Content (Join-Path $details.folder 'build-info.json') -Raw | ConvertFrom-Json
+          if ($metadata.sourceDirty -or $metadata.sourceCommit -ne $env:GITHUB_SHA -or $metadata.channel -ne 'public' -or $metadata.historyRows -ne 0) {
+            throw 'Build metadata does not match the tagged public source'
+          }
+          python tools/privacy_guard.py --root $details.folder
+          if ($LASTEXITCODE -ne 0) { throw 'Public archive content check failed' }
+          $checksums = Join-Path (Split-Path -Parent $details.zip) 'SHA256SUMS.txt'
+          Set-Content -LiteralPath $checksums -Encoding utf8NoBOM -Value ($details.sha256 + '  ' + (Split-Path -Leaf $details.zip))
+          "zip=$($details.zip)" >> $env:GITHUB_OUTPUT
+          "checksums=$checksums" >> $env:GITHUB_OUTPUT
+      - name: Upload and publish the release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_ZIP: ${{ steps.package.outputs.zip }}
+          RELEASE_CHECKSUMS: ${{ steps.package.outputs.checksums }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $tag = $env:GITHUB_REF_NAME
+          $repo = $env:GITHUB_REPOSITORY
+          $filter = '.[] | select(.tag_name == "' + $tag + '")'
+          $found = gh api --paginate "repos/$repo/releases?per_page=100" --jq $filter
+          if ($LASTEXITCODE -ne 0) { throw 'Cannot query releases' }
+          $release = if ($found) { $found | ConvertFrom-Json }
+          if ($release -and !$release.draft) { throw 'This version is already published' }
+          if (!$release) {
+            gh release create $tag --repo $repo --verify-tag --draft --title "$tag · Windows x64" --notes '下载 Windows 免安装 ZIP，完整解压后运行“一级市场情绪指数.exe”。公开包不预置历史；新电脑可在历史交接中导入团队内部提供的 JSON。'
+            if ($LASTEXITCODE -ne 0) { throw 'Cannot create release draft' }
+          }
+          gh release upload $tag $env:RELEASE_ZIP $env:RELEASE_CHECKSUMS --clobber --repo $repo
+          if ($LASTEXITCODE -ne 0) { throw 'Cannot upload release files' }
+          $assets = gh release view $tag --repo $repo --json assets --jq '.assets' | ConvertFrom-Json
+          if ($LASTEXITCODE -ne 0) { throw 'Cannot verify release assets' }
+          foreach ($file in @($env:RELEASE_ZIP, $env:RELEASE_CHECKSUMS)) {
+            $asset = $assets | Where-Object name -EQ (Split-Path -Leaf $file)
+            if (!$asset -or $asset.size -ne (Get-Item -LiteralPath $file).Length) { throw "Asset missing or incomplete: $file" }
+          }
+          gh release edit $tag --repo $repo --draft=false --latest
+          if ($LASTEXITCODE -ne 0) { throw 'Cannot publish release' }
