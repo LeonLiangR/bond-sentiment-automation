@@ -17,10 +17,14 @@ export async function connectDq(settings){
   if(!r.ok||result.code&&result.code!=='S00000000001')throw Error('DQ请求失败：'+(result.msg||result.code||r.status));
   return {message:result.msg,data:result.code==='S00000000001'?result.data:result};
  }
- const rights=await request('search/primaryMarketPricing/getAuth',{channel:'PC'});
+ const [rights,download,maximum]=await Promise.all([
+  request('search/primaryMarketPricing/getAuth',{channel:'PC'}),
+  request('search/calcPricingBatch/queryBatchCalDownloadRole',undefined,'GET'),
+  request('search/calcPricingBatch/getmaxLength',{})
+ ]);
  if(rights.data?.pricingDataIntercept!=='00')throw Error('当前DQ账号没有批量试算权限');
- const download=await request('search/calcPricingBatch/queryBatchCalDownloadRole',undefined,'GET');if(download.data!=='1')throw Error('当前DQ账号没有结果下载权限');
- const limit=Number((await request('search/calcPricingBatch/getmaxLength',{})).data?.paravalue);
+ if(download.data!=='1')throw Error('当前DQ账号没有结果下载权限');
+ const limit=Number(maximum.data?.paravalue);
  if(!Number.isInteger(limit)||limit<=0)throw Error('DQ批量上限无效');
  return {request,limit};
 }

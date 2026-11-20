@@ -52,6 +52,12 @@
       </Grid>
      </Border>
     </Grid>
+    <Border Background="{DynamicResource Panel}" BorderBrush="{DynamicResource Line}" BorderThickness="1" CornerRadius="12" Margin="0,18,0,0" Padding="18,14">
+     <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+      <StackPanel Margin="0,0,14,0"><TextBlock Text="历史交接" FontSize="15" Margin="0,0,0,5"/><TextBlock x:Name="HistorySummary" Text="月末导出完整历史，接手时导入补齐。" Style="{DynamicResource Small}" TextWrapping="Wrap"/></StackPanel>
+      <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center"><Button x:Name="ImportHistoryButton" Content="导入历史" Padding="13,8" Margin="0,0,8,0" ToolTip="补齐缺失日期，同日记录保留本机值"/><Button x:Name="ExportHistoryButton" Content="导出历史" Padding="13,8" Foreground="{DynamicResource Gold}" Background="#25251D" ToolTip="导出完整汇总历史，交接给下月同事"/></StackPanel>
+     </Grid>
+    </Border>
     <Border Background="{DynamicResource Deep}" BorderBrush="{DynamicResource Line}" BorderThickness="1" CornerRadius="12" Margin="0,20,0,0">
      <Expander x:Name="LogExpander" Header="运行记录"><StackPanel><TextBox x:Name="LogBox" IsReadOnly="True" AcceptsReturn="True" TextWrapping="Wrap" VerticalScrollBarVisibility="Auto" Height="138" Background="Transparent" BorderThickness="0" Padding="15,4,15,10" FontSize="12"/><DockPanel Margin="8,0,8,7"><Button x:Name="LogFolderButton" Content="打开本次过程记录" FontSize="12" MinHeight="30" Padding="8,4"/><Button x:Name="CopyLogButton" Content="复制记录" DockPanel.Dock="Right" HorizontalAlignment="Right" FontSize="12" MinHeight="30" Padding="8,4"/></DockPanel></StackPanel></Expander>
     </Border>

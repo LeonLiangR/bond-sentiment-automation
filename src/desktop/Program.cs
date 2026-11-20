@@ -31,6 +31,16 @@ namespace SentimentDesktop {
                             if (diagnostic != null) DesktopSettings.AtomicJson(diagnostic, controller.TestState()); if (target != window) target.Close(); window.Close(); return;
                         }
                         await controller.Initialize();
+                        if (test == "history") {
+                            controller.HistoryFileSelection = importing => Option(args, importing ? "--history-input" : "--history-output");
+                            string conflictNotice = null; controller.HistoryConflictDisplay = message => { conflictNotice = message; };
+                            controller.Control<System.Windows.Controls.Button>("ExportHistoryButton").RaiseEvent(new RoutedEventArgs(System.Windows.Controls.Button.ClickEvent)); await controller.HistoryTransferTask;
+                            controller.Control<System.Windows.Controls.Button>("ImportHistoryButton").RaiseEvent(new RoutedEventArgs(System.Windows.Controls.Button.ClickEvent)); await controller.HistoryTransferTask;
+                            await Dispatcher.Yield(DispatcherPriority.ApplicationIdle);
+                            if (snapshot != null) UiTheme.Snapshot(window, snapshot, 1);
+                            if (diagnostic != null) DesktopSettings.AtomicJson(diagnostic, new { ui = controller.TestState(), history = controller.Control<System.Windows.Controls.TextBlock>("HistorySummary").Text, conflictNotice });
+                            window.Close(); return;
+                        }
                         if (test != null) {
                             controller.ReplayDirectory = Option(args, "--replay"); string date = Option(args, "--date"); if (date != null) controller.SetDate(DateTime.ParseExact(date, "yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture));
                             controller.SetDestination(Option(args, "--output-dir"));

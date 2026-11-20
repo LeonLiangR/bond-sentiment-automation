@@ -16,13 +16,18 @@ namespace SentimentDesktop {
         public DateTime SelectedDate;
         public string ReplayDirectory;
         public RunOutcome LastOutcome;
+        public Func<bool, string> HistoryFileSelection;
+        public Action<string> HistoryConflictDisplay;
+        public Task HistoryTransferTask = Task.FromResult(0);
+        Dictionary<string, object> lastHistoryTransfer;
         Dictionary<string, object> settings, latest;
         readonly TaskRunner runner = new TaskRunner();
         readonly List<TextBlock> stepNumbers = new List<TextBlock>(), stepLabels = new List<TextBlock>();
         readonly List<Border> stepCircles = new List<Border>();
         readonly Queue<string> lines = new Queue<string>();
         string destination, state = "idle", logDirectory;
-        bool busy, closeAfter, stopping, failed; int currentStep = -1;
+        bool busy, historyBusy, closeAfter, stopping, failed; int currentStep = -1;
+        string historyLastDate;
         public MainController() {
             using (var input = File.OpenRead(Path.Combine(DesktopSettings.Root, @"src\desktop\MainWindow.xaml"))) Window = (Window)XamlReader.Load(input);
             UiTheme.Chrome(Window); Window.Width = Math.Min(1080, SystemParameters.WorkArea.Width - 40); Window.Height = Math.Min(780, SystemParameters.WorkArea.Height - 40);
@@ -32,6 +37,8 @@ namespace SentimentDesktop {
             Control<Button>("MaximizeButton").Click += delegate { Window.WindowState = Window.WindowState == WindowState.Maximized ? WindowState.Normal : WindowState.Maximized; };
             Control<Button>("CloseButton").Click += delegate { Window.Close(); };
             Control<Button>("SettingsButton").Click += delegate { EditSettings(); };
+            Control<Button>("ImportHistoryButton").Click += async delegate { HistoryTransferTask = TransferHistory(true); await HistoryTransferTask; };
+            Control<Button>("ExportHistoryButton").Click += async delegate { HistoryTransferTask = TransferHistory(false); await HistoryTransferTask; };
             Control<Button>("DateButton").Click += delegate { var dialog = new CalendarDialog(Window, SelectedDate); dialog.Window.ShowDialog(); if (dialog.Selection.HasValue) { SelectedDate = dialog.Selection.Value; RefreshDate(); } };
             Control<Button>("FolderButton").Click += delegate { try { string folder = NativeDialogs.Folder(Window, destination); if (folder != null) { destination = folder; settings["outputDir"] = folder; DesktopSettings.Save(settings); RefreshDestination(); } } catch (Exception ex) { SetStatus("无法选择目录：" + ex.Message, true); } };
             Control<Button>("GenerateButton").Click += async delegate { await Generate(); };
@@ -51,7 +58,7 @@ namespace SentimentDesktop {
             }
             runner.Log += line => Window.Dispatcher.BeginInvoke(new Action(() => Append(line)));
             runner.Event += value => Window.Dispatcher.BeginInvoke(new Action(() => Receive(value)));
-            Window.Closing += delegate(object sender, System.ComponentModel.CancelEventArgs e) { if (busy) { e.Cancel = true; closeAfter = true; Stop(); } };
+            Window.Closing += delegate(object sender, System.ComponentModel.CancelEventArgs e) { if (historyBusy) { e.Cancel = true; closeAfter = true; } else if (busy) { e.Cancel = true; closeAfter = true; Stop(); } };
             Window.SizeChanged += delegate { Responsive(); };
             settings = DesktopSettings.Read(); destination = DesktopSettings.Get(settings, "outputDir"); if (String.IsNullOrWhiteSpace(destination)) destination = Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory);
             SelectedDate = DateTime.Today.AddDays(-1); while (SelectedDate.DayOfWeek == DayOfWeek.Saturday || SelectedDate.DayOfWeek == DayOfWeek.Sunday) SelectedDate = SelectedDate.AddDays(-1);
@@ -59,11 +66,44 @@ namespace SentimentDesktop {
         }
         public T Control<T>(string name) where T : FrameworkElement { return (T)Window.FindName(name); }
         public async Task Initialize() {
+            await RefreshHistory();
             if (DesktopSettings.Valid(settings)) return;
             Control<Button>("GenerateButton").IsEnabled = false; SetStatus("首次使用，正在检测软件安装位置…", false);
             try { settings = await Task.Run(() => DesktopSettings.Detect(false)); if (DesktopSettings.Valid(settings)) { DesktopSettings.Save(settings); SetStatus("软件位置已记录，运行时验证数据与插件。", false); } else SetStatus("请在设置中补全DM、DQ及所选表格引擎的位置。", true); }
             catch (Exception ex) { SetStatus(ex.Message, true); }
-            finally { Control<Button>("GenerateButton").IsEnabled = true; }
+            finally { Control<Button>("GenerateButton").IsEnabled = !busy && !historyBusy; }
+        }
+        async Task RefreshHistory() {
+            try {
+                var result = await HistoryBridge.Run("summary", null); historyLastDate = DesktopSettings.Get(result, "lastDate");
+                double count = DesktopSettings.Number(result, "count") ?? 0;
+                Control<TextBlock>("HistorySummary").Text = count == 0 ? "尚无历史，接手时可先导入交接文件。" : "已收录 " + count.ToString("0") + " 个日期  ·  " + DesktopSettings.Get(result, "firstDate") + " 至 " + historyLastDate;
+            } catch (Exception ex) { Control<TextBlock>("HistorySummary").Text = "历史读取未完成：" + ex.Message; }
+        }
+        async Task TransferHistory(bool import) {
+            if (busy || historyBusy) return;
+            string file;
+            try { file = HistoryFileSelection != null ? HistoryFileSelection(import) : import ? NativeDialogs.ImportHistory(Window) : NativeDialogs.ExportHistory(Window, String.IsNullOrEmpty(historyLastDate) ? DateTime.Today.ToString("yyyy-MM-dd") : historyLastDate); }
+            catch (Exception ex) { SetStatus("无法选择历史文件：" + ex.Message, true); return; }
+            if (file == null) return;
+            historyBusy = true; SetBusy(false); Control<TextBlock>("HistorySummary").Text = import ? "正在校验并合并交接历史…" : "正在导出完整汇总历史…";
+            try {
+              try {
+                var result = await HistoryBridge.Run(import ? "import" : "export", file);
+                lastHistoryTransfer = result;
+                if (import) {
+                    string note = "历史导入完成：新增 " + Format(result, "added", "0") + " 个日期，已有一致 " + Format(result, "identical", "0") + " 个。";
+                    double conflicts = DesktopSettings.Number(result, "conflictCount") ?? 0;
+                    if (conflicts > 0) {
+                        note += "同日冲突 " + conflicts.ToString("0") + " 个，已保留本机记录。";
+                        string message = note + "\n\n冲突日期：" + DesktopSettings.Get(result, "conflictPreview") + (conflicts > 12 ? "等" : "");
+                        if (HistoryConflictDisplay != null) HistoryConflictDisplay(message); else MessageBox.Show(Window, message, "历史交接完成", MessageBoxButton.OK, MessageBoxImage.Information);
+                    }
+                    Append(note); SetStatus(note, false);
+                } else { string note = "已导出 " + Format(result, "count", "0") + " 个日期的完整历史，可交接给下月同事。"; Append(note); SetStatus(note, false); }
+              } catch (Exception ex) { Append("历史交接失败：" + ex.Message); SetStatus("历史交接失败：" + ex.Message, true); }
+              await RefreshHistory();
+            } finally { historyBusy = false; SetBusy(false); if (closeAfter) Window.Close(); }
         }
         void EditSettings() { var dialog = new SettingsDialog(Window, settings); dialog.Window.ShowDialog(); if (dialog.Saved) { settings = DesktopSettings.Read(); SetStatus("软件位置已保存，后续打开直接使用。", false); } }
         void RefreshDate() { Control<Button>("DateButton").Content = SelectedDate.ToString("yyyy-MM-dd") + "   ⌄"; }
@@ -82,7 +122,7 @@ namespace SentimentDesktop {
         }
         void SetStatus(string text, bool error) { Control<TextBlock>("Status").Text = text; Control<TextBlock>("Status").Foreground = error ? UiTheme.Danger : UiTheme.Muted; }
         void SetBusy(bool value) {
-            busy = value; foreach (string key in new[] { "GenerateButton", "DateButton", "FolderButton", "SettingsButton" }) Control<Button>(key).IsEnabled = !value;
+            busy = value; foreach (string key in new[] { "GenerateButton", "DateButton", "FolderButton", "SettingsButton", "ImportHistoryButton", "ExportHistoryButton" }) Control<Button>(key).IsEnabled = !value && !historyBusy;
             Control<Button>("StopButton").Visibility = value ? Visibility.Visible : Visibility.Collapsed; Control<Button>("StopButton").IsEnabled = value;
             Control<TextBlock>("GenerateLabel").Text = value ? "正在生成报告…" : "生成当日报告";
         }
@@ -106,7 +146,7 @@ namespace SentimentDesktop {
             string run = DesktopSettings.Get(value, "run"); if (!String.IsNullOrEmpty(run)) { logDirectory = run; Control<Button>("LogFolderButton").IsEnabled = true; }
         }
         public async Task Generate() {
-            if (busy) return;
+            if (busy || historyBusy) return;
             if (!DesktopSettings.Valid(settings)) { SetStatus("请先在设置中确认DM、DQ及Excel或WPS安装位置。", true); return; }
             try { destination = Path.GetFullPath(destination); Directory.CreateDirectory(destination); settings["outputDir"] = destination; DesktopSettings.Save(settings); }
             catch (Exception ex) { SetStatus("无法使用保存目录：" + ex.Message, true); return; }
@@ -122,7 +162,8 @@ namespace SentimentDesktop {
                     state = "stopped"; Control<TextBlock>("TaskBadge").Text = "已停止"; SetStatus("任务已停止，本轮新增后台已释放。", false); PaintSteps(-1, false, false);
                 } else { Fail(LastOutcome.Error, LastOutcome.Receipt != null && DesktopSettings.Flag(LastOutcome.Receipt, "cleanup")); }
             } catch (Exception ex) { Append(ex.ToString()); Fail(ex.Message, false); }
-            finally { SetBusy(false); if (closeAfter) Window.Close(); }
+            finally { SetBusy(false); }
+            await RefreshHistory(); if (closeAfter) Window.Close();
         }
         void Fail(string message, bool cleanup) {
             state = "error"; failed = true; Control<TextBlock>("TaskBadge").Text = "未完成"; PaintSteps(currentStep, false, true);
@@ -147,6 +188,6 @@ namespace SentimentDesktop {
         static string Format(Dictionary<string, object> values, string key, string format) { double? value = DesktopSettings.Number(values, key); return value.HasValue ? value.Value.ToString(format, System.Globalization.CultureInfo.InvariantCulture) : "—"; }
         void OpenReport(string prefix, string suffix) { string file = Path.Combine(DesktopSettings.Get(latest, "output"), prefix + DesktopSettings.Get(latest, "date").Replace("-", "") + suffix); Open(file); }
         void Open(string target) { try { if (String.IsNullOrWhiteSpace(target) || !Directory.Exists(target) && !File.Exists(target)) { SetStatus("文件已移动或不存在，请检查报告保存目录。", true); return; } Process.Start(new ProcessStartInfo(target) { UseShellExecute = true }); } catch (Exception ex) { SetStatus("无法打开文件：" + ex.Message, true); } }
-        public object TestState() { return new { state, busy, canStart = Control<Button>("GenerateButton").IsEnabled, canStop = Control<Button>("StopButton").IsEnabled, status = Control<TextBlock>("Status").Text, index = Control<TextBlock>("IndexValue").Text, sampleCount = Control<TextBlock>("SampleCount").Text, latestOutput = DesktopSettings.Get(latest, "output"), lastOutcome = LastOutcome == null ? null : new { LastOutcome.Success, LastOutcome.Cancelled, LastOutcome.ExitCode, LastOutcome.RequestId, LastOutcome.Error }, font = UiTheme.FontEvidence }; }
+        public object TestState() { return new { state, busy, historyBusy, historySummary = Control<TextBlock>("HistorySummary").Text, lastHistoryTransfer, canImportHistory = Control<Button>("ImportHistoryButton").IsEnabled, canExportHistory = Control<Button>("ExportHistoryButton").IsEnabled, canStart = Control<Button>("GenerateButton").IsEnabled, canStop = Control<Button>("StopButton").IsEnabled, status = Control<TextBlock>("Status").Text, index = Control<TextBlock>("IndexValue").Text, sampleCount = Control<TextBlock>("SampleCount").Text, latestOutput = DesktopSettings.Get(latest, "output"), lastOutcome = LastOutcome == null ? null : new { LastOutcome.Success, LastOutcome.Cancelled, LastOutcome.ExitCode, LastOutcome.RequestId, LastOutcome.Error }, font = UiTheme.FontEvidence }; }
     }
 }

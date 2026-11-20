@@ -5,6 +5,15 @@ using System.Windows.Interop;
 
 namespace SentimentDesktop {
     internal static class NativeDialogs {
+        public static string ImportHistory(Window owner) {
+            var dialog = new Microsoft.Win32.OpenFileDialog { Title = "导入月度交接历史", Filter = "情绪指数历史文件 (*.json)|*.json", CheckFileExists = true, Multiselect = false };
+            return dialog.ShowDialog(owner) == true ? dialog.FileName : null;
+        }
+        public static string ExportHistory(Window owner, string lastDate) {
+            var dialog = new Microsoft.Win32.SaveFileDialog { Title = "导出完整历史交接文件", Filter = "情绪指数历史文件 (*.json)|*.json", DefaultExt = ".json", AddExtension = true, OverwritePrompt = true,
+                InitialDirectory = Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory), FileName = "情绪指数历史交接_截至" + lastDate.Replace("-", "") + ".json" };
+            return dialog.ShowDialog(owner) == true ? dialog.FileName : null;
+        }
         public static string Folder(Window owner, string initial) {
             var dialog = (IFileOpenDialog)new FileOpenDialog(); IShellItem result = null;
             try {

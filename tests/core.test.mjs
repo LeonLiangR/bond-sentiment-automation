@@ -3,6 +3,20 @@ import {filterSamples,scoreSpread,summarize,makeScenario,bindUploaded,joinResult
 test('筛选同时剔除空白和零，并保留重复简称的独立样本ID',()=>{const r=filterSamples([{row:9,name:'同名',type:'公司债券',coupon:.02},{row:10,name:'同名',type:'公司债券',coupon:.02},{row:11,name:'零',type:'公司债券',coupon:0},{row:12,name:'空',type:'公司债券',coupon:' '},{row:13,name:'排除',type:'超短期融资券(SCP)',coupon:.02}],'2026-11-12');assert.equal(r.samples.length,2);assert.notEqual(r.samples[0].sampleId,r.samples[1].sampleId);assert.equal(r.excluded.length,3);});
 test('斜坡计分边界和正负不对称',()=>{for(const[x,v]of [[-20,1],[-10,1],[-5,2/7],[-3,0],[0,0],[3,0],[5,-3/7],[10,-1.5],[20,-1.5]])assert.ok(Math.abs(scoreSpread(x)-v)<1e-12);assert.equal(scoreSpread(3.00000000003),0);assert.throws(()=>summarize([]),/没有有效/);assert.equal(summarize([{spread:3}]).bins[3],1);});
 const wind={code:'123456.SH',issuer:'某发行人有限公司',windType:'一般公司债',term:5,option:'3+2',subordinate:'否',green:'否',science:'是',guarantor:0};
+test('Wind代码不作为DQ准入条件，所需条款和独立样本校验仍保留',()=>{
+ const sample={sampleId:'code-optional',name:'test',coupon:.02},expected=makeScenario(sample,wind);
+ for(const code of ['q26111225.IB','',null,undefined,'#N/A']){
+  const result=makeScenario(sample,{...wind,code});assert.equal(result.scenarioHash,expected.scenarioHash);assert.equal(result.sampleId,sample.sampleId);
+ }
+ assert.throws(()=>makeScenario(sample,{...wind,code:'q26111225.IB',issuer:null}),/issuer/);
+ assert.throws(()=>makeScenario(sample,{...wind,code:'',term:0,option:0}),/期限/);
+});
+test('六档仅影响老指数，正负3BP的新指数逐券得分仍为0',()=>{
+ const low=summarize([{spread:-3}]),high=summarize([{spread:3}]);
+ assert.deepEqual(low.bins,[0,1,0,0,0,0]);assert.deepEqual(high.bins,[0,0,0,1,0,0]);
+ assert.equal(low.index,50);assert.equal(high.index,50);assert.equal(low.oldIndex,50.5);assert.equal(high.oldIndex,49.5);
+ assert.equal(scoreSpread(-3),0);assert.equal(scoreSpread(3),0);assert.equal(scoreSpread(-5),2/7);assert.equal(scoreSpread(5),-3/7);
+});
 const scenarios=[1,2].map(i=>makeScenario({sampleId:'id'+i,name:'同简称',coupon:.02},wind));
 const rows=[1,2].map(i=>({id:'row'+i,batchId:'batch',orderNum:String(i),ptName:wind.issuer,term:'3',termUnit:'Y',assetDtlCategCode:ASSET.公司债,thematicBonds:'03',issueMode:'1',renewalFlg:'0',secoFlg:'0',guarType:'0',isSuccess:'1'}));
 test('DQ结果重排及重复发行条件仍一一对应；缺失、重复、篡改均拒绝',()=>{const bindings=bindUploaded(scenarios,[...rows].reverse());assert.deepEqual(bindings.map(b=>b.dqId),['row1','row2']);assert.throws(()=>bindUploaded(scenarios,[rows[0],rows[0]]));assert.throws(()=>bindUploaded(scenarios,[rows[0]]));assert.throws(()=>bindUploaded(scenarios,[rows[0],{...rows[1],term:'5'}]));const results=rows.map((r,i)=>({...r,isCalculate:'1',valDate:'2026-11-12',prcMin:1.7+i*.1,prcMax:1.9+i*.1})).reverse();const j=joinResults(scenarios,bindings,results,'2026-11-12');assert.equal(j.valid[0].dq.id,'row1');assert.equal(j.valid[1].dq.id,'row2');assert.throws(()=>joinResults(scenarios,bindings,results.map(r=>({...r,valDate:'2026-11-11'})),'2026-11-12'));});

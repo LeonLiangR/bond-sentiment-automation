@@ -1,7 +1,8 @@
 param([string]$OutputDirectory)
 $ErrorActionPreference='Stop'
 . (Join-Path $PSScriptRoot '../src/wps-common.ps1')
-Add-Type -TypeDefinition 'public class FakeOfficeApp { public long Hwnd=1; public bool Visible=true; public bool DisplayAlerts=true; public int QuitCount=0; public void Quit(){QuitCount++;} } public class FakeOfficeBook { public int CloseCount=0; public void Close(bool save){CloseCount++;} }'
+Add-Type -TypeDefinition 'public class FakeOfficeApp { public long Hwnd=1; public bool Visible=true; public bool DisplayAlerts=true; public bool ScreenUpdating=true; public bool Interactive=true; public bool EnableEvents=true; public int QuitCount=0; public void Quit(){QuitCount++;} } public class FakeOfficeBook { public bool Saved=false; public int CloseCount=0; public void Close(bool save){CloseCount++;} }'
+function Hide-ExcelWindows([int]$ProcessId){}
 function Assert($Condition,[string]$Message){if(-not $Condition){throw $Message}}
 function New-SpreadsheetCom([string]$ProgId){$script:lastProgId=$ProgId;if($script:factoryFails){throw 'Class not registered'};return $script:fake}
 function Get-SpreadsheetProcesses {return $script:previous}

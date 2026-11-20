@@ -1,23 +1,27 @@
 param([string]$Template,[string]$PlanFile,[string]$ImageFile,[string]$OutputFile,[string]$RunDirectory,[switch]$PreviewPdf)
 . (Join-Path $PSScriptRoot 'wps-common.ps1')
 $plan=Get-Content -LiteralPath $PlanFile -Raw -Encoding UTF8|ConvertFrom-Json;$app=$null;$book=$null
+$clock=[Diagnostics.Stopwatch]::StartNew();$last=0
+function Report-Timing([string]$Name){$now=$clock.ElapsedMilliseconds;[IO.File]::AppendAllText((Join-Path $RunDirectory 'report-timings.jsonl'),(([ordered]@{operation=$Name;elapsedMs=($now-$script:last);totalMs=$now;at=[DateTime]::UtcNow.ToString('o')}|ConvertTo-Json -Compress)+[Environment]::NewLine),[Text.UTF8Encoding]::new($false));$script:last=$now}
 function Read-Rows($Sheet,[int]$Count,[int]$Cols){$block=$Sheet.Range('A2').Resize($Count,$Cols).Value2;$list=@();for($i=1;$i -le $Count;$i++){$row=@();for($j=1;$j -le $Cols;$j++){$row+=$block.GetValue($i,$j)};$list+=,$row};return ,$list}
-function Apply-Formulas($Sheet,$Forms){foreach($f in $Forms){$Sheet.Range($f.cell).Formula=$f.value}}
 function Score([double]$x){if([math]::Abs($x)-le 3){return 0};if($x-lt 0){return [math]::Min((-3-$x)/7,1)};return -1.5*[math]::Min(($x-3)/7,1)}
 try{
- $app=Open-OwnedWps $RunDirectory;$book=$app.Workbooks.Open($Template,0,$false);$summary=$book.Worksheets.Item(1);$samples=$book.Worksheets.Item(2);$dq=$book.Worksheets.Item(3);$dm=$book.Worksheets.Item(4);$history=$book.Worksheets.Item(5)
- Write-Block $samples 'A2' $plan.samples;Write-Block $dq 'A2' $plan.dq;$headerMatrix=New-Object 'object[,]' 1,$plan.dmHeaders.Count;for($j=0;$j -lt $plan.dmHeaders.Count;$j++){$headerMatrix[0,$j]=$plan.dmHeaders[$j]};$dm.Range('A1').Resize(1,$plan.dmHeaders.Count).Value2=$headerMatrix;Write-Block $dm 'A2' $plan.dm;Write-Block $history 'A2' $plan.history
- $summary.Range('B3').Value2=$plan.date;$summary.Range('B3').NumberFormat='yyyy-mm-dd';$summary.Range('A19').Value2=$plan.reportText;$summary.Range('A1:I24').VerticalAlignment=-4108
- if($plan.scoringNote){$summary.Range('A17').Value2=$plan.scoringNote;$summary.Range('A17:I17').WrapText=$true;$summary.Rows.Item(17).RowHeight=[double]$plan.scoringNoteHeight}
- Apply-Formulas $dq $plan.forms.dq;Apply-Formulas $samples $plan.forms.samples;Apply-Formulas $summary $plan.forms.summary
- $samples.Range('A:A').ColumnWidth=24;$samples.Range('B:C').ColumnWidth=26;$samples.Range('E:E').ColumnWidth=38;$samples.Range('P:P').ColumnWidth=38;$samples.Range('G2:G'+($plan.samples.Count+1)).NumberFormat='0.00%';$samples.Range('H2:K'+($plan.samples.Count+1)).NumberFormat='0.0000';$samples.Range('M2:N'+($plan.samples.Count+1)).NumberFormat='0.000000'
- $dq.Range('B:C').ColumnWidth=26;$dq.Range('D:E').ColumnWidth=38;$dq.Range('Q:S').ColumnWidth=35;$dq.Range('L2:L'+($plan.dq.Count+1)).NumberFormat='yyyy-mm-dd';$dq.Range('M2:O'+($plan.dq.Count+1)).NumberFormat='0.0000';$dm.UsedRange.Font.Name='Microsoft YaHei';$dm.UsedRange.Font.Size=10;$dm.UsedRange.RowHeight=24;$dm.Range('A:U').ColumnWidth=18;$dm.Range('A:B').ColumnWidth=27;$dm.Range('K:K').ColumnWidth=40;$dm.Range('Q:Q').ColumnWidth=40;$dm.Range('A1').Resize(1,$plan.dmHeaders.Count).Interior.Color=6507304;$dm.Range('A1').Resize(1,$plan.dmHeaders.Count).Font.Color=16777215;$dm.Range('A1').Resize(1,$plan.dmHeaders.Count).Font.Bold=$true;$dm.Range('G2:G'+($plan.dm.Count+1)).NumberFormat='0.00%'
- for($i=2;$i -le 5;$i++){$sheet=$book.Worksheets.Item($i);$sheet.UsedRange.Font.Name='Microsoft YaHei';$sheet.UsedRange.Font.Size=10;$sheet.UsedRange.VerticalAlignment=-4108;$sheet.UsedRange.RowHeight=24;$sheet.Rows.Item(1).RowHeight=38}
- $history.Range('A:A').ColumnWidth=15;$history.Range('A2:A'+($plan.history.Count+1)).NumberFormat='yyyy-mm-dd';$history.Range('B:J').ColumnWidth=17;$history.Range('H2:I'+($plan.history.Count+1)).NumberFormat='0.00';$history.Range('K:K').ColumnWidth=105;$history.Range('K2:K'+($plan.history.Count+1)).WrapText=$true;$history.Range('K2:K'+($plan.history.Count+1)).EntireRow.AutoFit()|Out-Null
- for($i=1;$i -le 9;$i++){$summary.Columns.Item($i).ColumnWidth=18}
- foreach($pair in @(@($samples,16),@($dq,17),@($dm,$plan.dmHeaders.Count))){for($i=1;$i -le $pair[1];$i++){$pair[0].Columns.Item($i).ColumnWidth=18}}
+ $app=Open-OwnedWps $RunDirectory;$book=Open-OwnedReportBook $app $Template;Set-OwnedSpreadsheetBackground $app;$summary=$book.Worksheets.Item(1);$samples=$book.Worksheets.Item(2);$dq=$book.Worksheets.Item(3);$dm=$book.Worksheets.Item(4);$history=$book.Worksheets.Item(5)
+ Report-Timing 'office-open';$app.Calculation=-4135
+ # Prevent WPS/Excel from coercing source strings such as "3.13" or "0012".
+ # Numeric Value2 entries retain their numeric type, even in a text-formatted range.
+ $dm.Range('A2').Resize($plan.dm.Count,$plan.dmHeaders.Count).NumberFormat='@'
+ # Values, mixed fonts and formulas were written in a single OOXML preparation pass.
+ $summary.Range('B3').NumberFormat='yyyy-mm-dd';$summary.Range('A1:I24').VerticalAlignment=-4108
+ if($plan.scoringNote){$summary.Range('A17:I17').WrapText=$true;$summary.Rows.Item(17).RowHeight=[double]$plan.scoringNoteHeight}
+ $samples.Range('G2:G'+($plan.samples.Count+1)).NumberFormat='0.00%';$samples.Range('H2:K'+($plan.samples.Count+1)).NumberFormat='0.0000';$samples.Range('M2:N'+($plan.samples.Count+1)).NumberFormat='0.000000'
+ $dq.Range('Q:S').ColumnWidth=35;$dq.Range('L2:L'+($plan.dq.Count+1)).NumberFormat='yyyy-mm-dd';$dq.Range('M2:O'+($plan.dq.Count+1)).NumberFormat='0.0000';$dm.UsedRange.Font.Size=10;$dm.Range('A1').Resize(1,$plan.dmHeaders.Count).Interior.Color=6507304;$dm.Range('A1').Resize(1,$plan.dmHeaders.Count).Font.Color=16777215;$dm.Range('A1').Resize(1,$plan.dmHeaders.Count).Font.Bold=$true;$dm.Range('G2:G'+($plan.dm.Count+1)).NumberFormat='0.00%'
+ for($i=2;$i -le 5;$i++){$sheet=$book.Worksheets.Item($i);$sheet.UsedRange.Font.Size=10;$sheet.UsedRange.VerticalAlignment=-4108;$sheet.UsedRange.RowHeight=24;$sheet.Rows.Item(1).RowHeight=38}
+ $history.Range('A:A').ColumnWidth=15;$history.Range('A2:A'+($plan.history.Count+1)).NumberFormat='yyyy-mm-dd';$history.Range('B:J').ColumnWidth=17;$history.Range('H2:I'+($plan.history.Count+1)).NumberFormat='0.00';$history.Range('K:K').ColumnWidth=105;$history.Range('K2:K'+($plan.history.Count+1)).WrapText=$true
+ $summary.Range('A:I').ColumnWidth=18
+ $samples.Range('A:P').ColumnWidth=18;$dq.Range('A:Q').ColumnWidth=18;$dm.Range('A1').Resize(1,$plan.dmHeaders.Count).EntireColumn.ColumnWidth=18
  foreach($entry in @(@($samples,1,24),@($samples,2,26),@($samples,3,26),@($samples,5,38),@($samples,16,38),@($dq,2,26),@($dq,3,26),@($dq,4,38),@($dq,5,38),@($dq,17,35),@($dm,1,27),@($dm,2,27),@($dm,11,40),@($dm,17,40))){$entry[0].Columns.Item($entry[1]).ColumnWidth=$entry[2]}
- $app.Calculate();Apply-ReportFonts $book;$history.Range('K2:K'+($plan.history.Count+1)).EntireRow.AutoFit()|Out-Null
+ Report-Timing 'layout';$app.Calculate();Report-Timing 'calculate';$history.Range('K2:K'+($plan.history.Count+1)).EntireRow.AutoFit()|Out-Null;Report-Timing 'history-autofit'
  $summary.Rows.Item('25:43').RowHeight=20;$anchor=$summary.Range('A25');$imageWidth=$summary.Range('A25:I25').Width;$picture=$summary.Shapes.AddPicture($ImageFile,0,-1,$anchor.Left,$anchor.Top,$imageWidth,($imageWidth*795/2741))
  $snapshot=[ordered]@{sheetNames=@();summary=[ordered]@{};samples=(Read-Rows $samples $plan.samples.Count 16);dq=(Read-Rows $dq $plan.dq.Count 17);dmRows=$plan.dm.Count;dmHeaders=@();dmData=(Read-Rows $dm $plan.dm.Count $plan.dmHeaders.Count);historyTail=@();pictureCount=$summary.Shapes.Count;mutation=$null;fonts=[ordered]@{chinese=$summary.Range('A1').Characters(1,1).Font.Name;english=$summary.Range('E15').Font.Name;mixedEnglish=$samples.Range('C1').Characters(1,2).Font.Name;mixedChinese=$samples.Range('C1').Characters(3,1).Font.Name}}
  $headerValues=$dm.Range('A1').Resize(1,$plan.dmHeaders.Count).Value2;for($j=1;$j -le $plan.dmHeaders.Count;$j++){$snapshot.dmHeaders+=$headerValues.GetValue(1,$j)};$tail=$history.Range('A'+($plan.history.Count+1)).Resize(1,11).Value2;for($j=1;$j -le 11;$j++){$snapshot.historyTail+=$tail.GetValue(1,$j)}
@@ -26,9 +30,9 @@ try{
  if($test -ge 0){$r=$test+2;$oldCoupon=$samples.Range('G'+$r).Value2;$oldScore=[double]$snapshot.samples[$test][12];$spread=[double]$snapshot.samples[$test][10];$samples.Range('G'+$r).Value2=[double]$oldCoupon+0.0001;$app.Calculate();$expected=50+25*(([double]$plan.summary.scoreSum-$oldScore+(Score ([math]::Round($spread+1,4))))/[double]$plan.summary.n);$actual=[double]$summary.Range('E15').Value2;if([math]::Abs($actual-$expected)-gt 1e-8){throw 'WPS formula mutation check failed'};$snapshot.mutation=[ordered]@{passed=$true;couponChangeBP=1;expected=$expected;actual=$actual};$samples.Range('G'+$r).Value2=$oldCoupon;$app.Calculate()}
  else{$snapshot.mutation=[ordered]@{passed=$true;skipped='All scores saturated; baseline and per-bond results still verified'}}
  if([math]::Abs([double]$summary.Range('E15').Value2-[double]$plan.summary.index)-gt 1e-8){throw 'WPS index mismatch'}
- $summary.PageSetup.PrintArea='A1:I43';$summary.PageSetup.Orientation=1;$summary.PageSetup.Zoom=50
- $book.SaveAs($OutputFile,51)
+ Report-Timing 'picture-snapshot-mutation';$summary.PageSetup.PrintArea='A1:I43';$summary.PageSetup.Orientation=1;$summary.PageSetup.Zoom=50;Report-Timing 'print-setup'
+ $app.Calculation=-4105;Report-Timing 'restore-auto-calculation';Save-OwnedReportBook $app $book $OutputFile;Report-Timing 'save'
  [IO.File]::WriteAllText((Join-Path $RunDirectory 'native-report.json'),($snapshot|ConvertTo-Json -Depth 12),[Text.UTF8Encoding]::new($false))
  if($PreviewPdf){for($i=1;$i -le 5;$i++){$s=$book.Worksheets.Item($i);if($i -ne 1){$s.PageSetup.PrintArea=if($i -eq 5){'A1:K8'}elseif($i -eq 4){'A1:U8'}elseif($i -eq 3){'A1:T8'}else{'A1:S8'};$s.PageSetup.Orientation=2};$s.PageSetup.Zoom=$false;$s.PageSetup.FitToPagesWide=1;$s.PageSetup.FitToPagesTall=1};$book.ExportAsFixedFormat(0,(Join-Path $RunDirectory 'five-sheet-preview.pdf'))}
  [ordered]@{written=$true;sheets=5;index=$snapshot.summary.E15;image=$summary.Shapes.Count}|ConvertTo-Json -Compress
-}finally{Close-OwnedWps $app $book}
+}finally{Close-OwnedWps $app $book;Report-Timing 'close'}

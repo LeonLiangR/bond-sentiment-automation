@@ -19,9 +19,11 @@ export function filterSamples(raw,date){
  return {samples,excluded};
 }
 export function makeScenario(sample,wind){
- const required=['code','issuer','guarantor','windType','term','option','subordinate','green','science'];
+ if(typeof wind.issuer!=='string'||!wind.issuer.trim()||wind.issuer.trim()==='0')throw Error('Wind字段缺失或错误：issuer');
+ if(typeof wind.windType!=='string'||!wind.windType.trim()||wind.windType.trim()==='0')throw Error('Wind字段缺失或错误：windType');
+ const required=['issuer','guarantor','windType','term','option','subordinate','green','science'];
  for(const key of required)if(wind[key]===null||wind[key]===undefined||String(wind[key]).trim()===''||String(wind[key]).startsWith('#'))throw Error('Wind字段缺失或错误：'+key);
- if(!/^\d{6,9}\.(IB|SH|SZ)$/.test(wind.code))throw Error('Wind未返回唯一有效代码');
+ // Wind code is an optional lookup/reference field, not a DQ input or matching key.
  if(!['是','否'].includes(wind.subordinate)||!['是','否'].includes(wind.green)||!['是','否'].includes(wind.science))throw Error('Wind标识字段异常');
  const option=String(wind.option),rawTerm=Number(wind.term);
  const term=(option==='0')?rawTerm:Number(option.split('+')[0]);
@@ -31,9 +33,10 @@ export function makeScenario(sample,wind){
  const guarantor=wind.guarantor===0||wind.guarantor==='0'||wind.guarantor===null?'':String(wind.guarantor??'').trim();
  if(guarantor.startsWith('#'))throw Error('担保人字段错误');
  const s={...sample,wind,issuer:String(wind.issuer).trim(),guarantor,term,termUnit:'Y',bondType:type,theme,issueMode:/定向|私募/.test(wind.windType)?'私募':'公募',renewal:option.includes('+N')?'可续期':'不可续期',subordinate:wind.subordinate==='否'?'非次级':'次级'};
- s.scenarioHash=createHash('sha256').update(JSON.stringify([s.issuer,s.guarantor,s.term,s.bondType,s.theme,s.issueMode,s.renewal,s.subordinate])).digest('hex');
+ s.scenarioHash=pricingScenarioHash(s);
  return s;
 }
+export function pricingScenarioHash(s){return createHash('sha256').update(JSON.stringify([s.issuer,s.guarantor,s.term,s.bondType,s.theme,s.issueMode,s.renewal,s.subordinate])).digest('hex');}
 export function uploadRow(s,seq){return [seq,s.issuer,s.guarantor||null,s.term,s.termUnit,s.bondType,s.theme,s.issueMode,s.renewal,s.subordinate];}
 const cleanName=v=>String(v??'').replace(/[()（）\s]/g,'');
 export function bindUploaded(scenarios,rows){
@@ -88,7 +91,7 @@ export function scoreSpread(s){s=roundBP(s);return Math.abs(s)<=3?0:s<0?Math.min
 export function summarize(valid){
  const spreads=valid.map(x=>x.spread),scores=spreads.map(scoreSpread),n=scores.length;
  if(!n)throw Error('没有有效定价样本，不能输出情绪指数');
- const bins=[spreads.filter(x=>x<-5).length,spreads.filter(x=>x>=-5&&x<-3).length,spreads.filter(x=>x>=-3&&x<3).length,spreads.filter(x=>x>=3&&x<5).length,spreads.filter(x=>x>=5&&x<10).length,spreads.filter(x=>x>=10).length];
+ const bins=[spreads.filter(x=>x<-5).length,spreads.filter(x=>x>=-5&&x<=-3).length,spreads.filter(x=>x>-3&&x<3).length,spreads.filter(x=>x>=3&&x<5).length,spreads.filter(x=>x>=5&&x<10).length,spreads.filter(x=>x>=10).length];
  const sum=scores.reduce((a,b)=>a+b,0),mean=sum/n,variance=n<2?null:scores.reduce((a,x)=>a+(x-mean)**2,0)/(n-1);
  return {n,bins,scoreSum:sum,mean,index:50+25*mean,oldIndex:50+bins[0]+bins[1]*.5-bins[3]*.5-bins[4]-bins[5]*1.5,confidence:n>=25?'正常':n>=15?'样本偏少':'低置信',se:variance===null?null:25*Math.sqrt(variance/n),netLow:(bins[0]+bins[1]-bins[3]-bins[4]-bins[5])/n,negative:spreads.filter(x=>x<0).length,zero:spreads.filter(x=>x===0).length,positive:spreads.filter(x=>x>0).length,negative10:spreads.filter(x=>x<=-10).length,positiveMin:spreads.some(x=>x>0)?Math.min(...spreads.filter(x=>x>0)):null,positiveMax:spreads.some(x=>x>0)?Math.max(...spreads.filter(x=>x>0)):null};
 }

@@ -2,7 +2,7 @@ param([ValidateSet('extract','upload')][string]$Mode,[string]$File,[string]$Inpu
 . (Join-Path $PSScriptRoot 'wps-common.ps1')
 $app=$null;$book=$null
 try{
- $app=Open-OwnedWps $RunDirectory;$book=$app.Workbooks.Open($File,0,$Mode -eq 'extract')
+ $app=Open-OwnedWps $RunDirectory;$book=$app.Workbooks.Open($File,0,$Mode -eq 'extract');Set-OwnedSpreadsheetBackground $app
  if($Mode -eq 'extract'){
   $sheet=$book.Worksheets.Item(1);$block=$sheet.UsedRange.Value2;$rowCount=$block.GetLength(0);$colCount=$block.GetLength(1);$header=0
   for($i=1;$i -le $rowCount;$i++){if([string]$block.GetValue($i,1) -eq ([string][char]0x503a+[char]0x5238+[char]0x7b80+[char]0x79f0)){$header=$i;break}}

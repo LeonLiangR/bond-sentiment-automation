@@ -3,9 +3,10 @@ export const LABELS=['低估值>5BP','低估值3—5BP','估值±3BP','高估值
 export const SCORING_NOTE=[
  '利差得分：x＝票面利率－DQ定价中枢（单位BP）。x≤−10得1分；−10<x<−3得(−3−x)/7分；−3≤x≤3得0分；3<x<10得−1.5×(x−3)/7分；x≥10得−1.5分。',
  '新情绪指数＝50＋25×有效样本逐券得分之和/N，N为剔除定价失败、空白及未匹配样本后的有效只数。',
- '旧情绪指数＝50＋n₁＋0.5n₂−0.5n₄−n₅−1.5n₆。n₁至n₆依次为x<−5、−5≤x<−3、−3≤x<3、3≤x<5、5≤x<10、x≥10的有效只数，按只数加权，不除以N。'
+ '旧情绪指数＝50＋n₁＋0.5n₂−0.5n₄−n₅−1.5n₆。n₁至n₆依次为x<−5、−5≤x≤−3、−3<x<3、3≤x<5、5≤x<10、x≥10的有效只数，按只数加权，不除以N。',
+ '统计分档与新指数评分分别计算：−3BP、＋3BP分别计入低/高估值3—5BP档，但斜坡逐券得分均为0。'
 ].join('\n');
-export const SCORING_NOTE_HEIGHT=96;
+export const SCORING_NOTE_HEIGHT=120;
 export const HEADERS={
  samples:['样本ID','债券简称','DM债券类型','Wind代码','发行人','有效期限(年)','实际票面利率','DQ下限(%)','DQ上限(%)','DQ中枢(%)','利差(BP)','是否计入指数','逐券得分','指数贡献(点)','处理状态','排除原因'],
  dq:['提交序号','样本ID','债券简称','发行人','担保人','期限(年)','债券类型','主题','发行方式','可续期','次级属性','估值日期','下限(%)','上限(%)','中枢(%)','处理状态','排除原因'],
@@ -20,18 +21,19 @@ export function buildReportPlan(data){
  const samples=sampleA.map((s,i)=>{const row=i+2,x=items.get(s.sampleId),ok=validIds.has(s.sampleId);if(!x)throw Error('样本状态缺失：'+s.sampleId);
   for(const [col,source]of [['H','M'],['I','N'],['J','O']])forms.samples.push({cell:col+row,value:`=IF(L${row}=1,INDEX('DQ结果'!$${source}$2:$${source}$${dqEnd},MATCH(A${row},'DQ结果'!$B$2:$B$${dqEnd},0)),"")`});
   forms.samples.push({cell:'K'+row,value:`=IF(L${row}=1,ROUND((G${row}*100-J${row})*100,4),"")`},{cell:'M'+row,value:`=IF(L${row}=1,IF(ABS(K${row})<=3,0,IF(K${row}<0,MIN((-3-K${row})/7,1),-1.5*MIN((K${row}-3)/7,1))),"")`},{cell:'N'+row,value:`=IF(L${row}=1,25*M${row}/'当日报告'!$C$15,"")`});
-  return [s.sampleId,s.name,s.dmType,x.wind?.code??null,x.issuer??null,x.term??null,s.coupon,null,null,null,null,ok?1:0,null,null,ok?'定价有效':x.stage==='Wind'?'Wind条款失败':'DQ定价失败',ok?null:x.reason];
+  return [s.sampleId,s.name,s.dmType,x.referenceCode??x.wind?.code??null,x.issuer??null,x.term??null,s.coupon,null,null,null,null,ok?1:0,null,null,ok?(x.dataSource==='DM'?'定价有效（DM补全）':'定价有效'):['Wind','条款'].includes(x.stage)?'条款获取失败':'DQ定价失败',ok?null:x.reason];
  });
  const dq=dqItems.map((s,i)=>{const r=i+2,ok=validIds.has(s.sampleId);forms.dq.push({cell:'O'+r,value:`=IF(P${r}="定价有效",(M${r}+N${r})/2,"")`});return[s.binding.seq,s.sampleId,s.name,s.issuer,s.guarantor||null,s.term,s.bondType,s.theme,s.issueMode,s.renewal,s.subordinate,s.dq.valDate??null,s.dq.prcMin??null,s.dq.prcMax??null,null,ok?'定价有效':'DQ定价失败',ok?null:s.reason];});
  const k=`'样本及逐券得分'!$K$2:$K$${end}`,flag=`'样本及逐券得分'!$L$2:$L$${end}`,scores=`'样本及逐券得分'!$M$2:$M$${end}`;
- const conditions=[['<-5'],['>=-5','<-3'],['>=-3','<3'],['>=3','<5'],['>=5','<10'],['>=10']];
+ const conditions=[['<-5'],['>=-5','<=-3'],['>-3','<3'],['>=3','<5'],['>=5','<10'],['>=10']];
  for(let j=0;j<6;j++){const col=String.fromCharCode(66+j);forms.summary.push({cell:col+'6',value:`=COUNTIFS(${flag},1,${conditions[j].map(c=>`${k},"${c}"`).join(',')})`},{cell:col+'9',value:`=${col}6`},{cell:col+'11',value:`=${col}9*${col}10`});}
  const cells={H6:'=SUM(B6:G6)',H9:'=SUM(B9:G9)',B12:'=SUM(B11:G11)',B15:`=SUM(${scores})`,C15:`=COUNTIFS(${flag},1)`,D15:`=IF(C15=0,"",AVERAGE(${scores}))`,E15:'=IF(C15=0,"",50+25*D15)',F15:'=IF(C15>=25,"正常",IF(C15>=15,"样本偏少","低置信"))',G15:'=50+B6+C6*0.5-E6*0.5-F6-G6*1.5',H15:'=IF(C15=0,"",(B6+C6-E6-F6-G6)/C15)',I15:`=IF(C15<2,"",25*STDEV(${scores})/SQRT(C15))`};
  forms.summary.push(...Object.entries(cells).map(([cell,value])=>({cell,value})));
  const current={date,bins:summary.bins,index:summary.index,oldIndex:summary.oldIndex,n:summary.n,text:data.reportText};const history=[...data.history.filter(h=>h.date<date),current].sort((a,b)=>a.date.localeCompare(b.date));
  const dmExcluded=new Map(excluded.filter(e=>e.stage==='DM筛选').map(e=>[e.sourceRow,e]));
  const dm=raw.rows.map(r=>[...r.values,dmExcluded.has(r.row)?'初筛剔除':'入选样本A',dmExcluded.get(r.row)?.reason??null]);
- return{date,sheets:SHEETS,headers:HEADERS,forms,samples,dq,dm,dmHeaders:[...raw.headers,'初筛状态','初筛原因'],history:history.map(h=>[Date.parse(h.date+'T00:00:00Z')/86400000+25569,...h.bins,h.index,h.oldIndex,h.n,h.text||null]),historyObjects:history,reportText:data.reportText,scoringNote:SCORING_NOTE,scoringNoteHeight:SCORING_NOTE_HEIGHT,summary,source:raw.title,sourceFile:data.article?.name||''};
+ const headers=sampleA.some(s=>items.get(s.sampleId)?.dataSource==='DM')?{...HEADERS,samples:HEADERS.samples.map((h,i)=>i===3?'债券代码':h)}:HEADERS;
+ return{date,sheets:SHEETS,headers,forms,samples,dq,dm,dmHeaders:[...raw.headers,'初筛状态','初筛原因'],history:history.map(h=>[Date.parse(h.date+'T00:00:00Z')/86400000+25569,...h.bins,h.index,h.oldIndex,h.n,h.text||null]),historyObjects:history,reportText:data.reportText,scoringNote:SCORING_NOTE,scoringNoteHeight:SCORING_NOTE_HEIGHT,summary,source:raw.title,sourceFile:data.article?.name||''};
 }
 export function checkNativeReport(actual,data,plan){
  const close=(a,b,label)=>{if(typeof a!=='number'||Math.abs(a-b)>1e-8)throw Error('表格结果不一致：'+label+' '+a+' / '+b);};

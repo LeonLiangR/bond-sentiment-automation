@@ -1,10 +1,11 @@
-$ErrorActionPreference = 'Stop'
+﻿$ErrorActionPreference = 'Stop'
 function Copy-ReleaseFile([string]$Root, [string]$Destination, [string]$Relative) {
     $target = Join-Path $Destination $Relative
     New-Item -ItemType Directory -Path (Split-Path -Parent $target) -Force | Out-Null
     Copy-Item -LiteralPath (Join-Path $Root $Relative) -Destination $target
 }
 function Copy-CleanTemplate([string]$Root, [string]$Destination, [string]$Relative) {
+    Add-Type -AssemblyName System.IO.Compression
     Add-Type -AssemblyName System.IO.Compression.FileSystem
     $source = Join-Path $Root $Relative
     # The development folder may retain the vendor blank template under this name.

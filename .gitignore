@@ -9,6 +9,9 @@ test-results/
 *.log
 settings.json
 history.json
+history-backups/
+情绪指数历史交接_*.json
+assets/history-seed.json
 last-run.json
 last-success.json
 templates/*
