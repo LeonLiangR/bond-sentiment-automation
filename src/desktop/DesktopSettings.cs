@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.ComponentModel;
 using System.Diagnostics;
 using System.IO;
 using System.Text;
@@ -58,7 +59,14 @@ namespace SentimentDesktop {
                 UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true, RedirectStandardError = true,
                 StandardOutputEncoding = Encoding.UTF8, StandardErrorEncoding = Encoding.UTF8
             };
-            using (var process = Process.Start(start)) {
+            Process process;
+            try { process = Process.Start(start); }
+            catch (Win32Exception ex) {
+                if (ex.NativeErrorCode == 786 || ex.NativeErrorCode == 1260)
+                    throw new InvalidOperationException("公司策略阻止了自动检测启动 PowerShell（Windows 错误 " + ex.NativeErrorCode + "）。可以手动选择程序文件并保存；日报能否启动需由 IT 确认。", ex);
+                throw;
+            }
+            using (process) {
                 var output = process.StandardOutput.ReadToEndAsync(); var errors = process.StandardError.ReadToEndAsync();
                 if (!process.WaitForExit(30000)) { process.Kill(); throw new InvalidOperationException("软件位置检测超时，请手动选择安装位置。"); }
                 if (process.ExitCode != 0) throw new InvalidOperationException("未完成软件位置检测，请手动选择安装位置。" + errors.Result);
@@ -69,23 +77,67 @@ namespace SentimentDesktop {
             }
             return values;
         }
+        static FileAttributes? ReadAttributes(string path) {
+            try { return System.IO.File.GetAttributes(path); }
+            catch (FileNotFoundException) { return null; }
+            catch (DirectoryNotFoundException) { return null; }
+        }
         public static string ResolveExecutable(string key, string input) {
-            string candidate = (input ?? "").Trim().Trim('"');
-            if (Directory.Exists(candidate)) {
-                if (key == "dmExe") candidate = Path.Combine(candidate, "launcher.exe");
-                else if (key == "wpsExe") candidate = Path.Combine(candidate, "et.exe");
-                else if (key == "excelExe") candidate = Path.Combine(candidate, "EXCEL.EXE");
-                else {
-                    foreach (string file in Directory.GetFiles(candidate, "*.exe")) if (Path.GetFileName(file).IndexOf("DQ", StringComparison.OrdinalIgnoreCase) >= 0 && !Path.GetFileName(file).StartsWith("Uninstall", StringComparison.OrdinalIgnoreCase)) { candidate = file; break; }
-                }
+            string label, expected;
+            string[] relativeFiles;
+            switch (key) {
+                case "dmExe": label = "DM"; expected = "launcher.exe 或 DM-Native.exe"; relativeFiles = new[] { "launcher.exe", "DM-Native.exe" }; break;
+                case "dqExe": label = "DQ"; expected = "中债 DQ 终端的 .exe"; relativeFiles = new string[0]; break;
+                case "wpsExe": label = "WPS 表格"; expected = "office6 目录下的 et.exe"; relativeFiles = new[] { "et.exe", @"office6\et.exe" }; break;
+                case "excelExe": label = "Excel"; expected = "Microsoft Office 目录下的 EXCEL.EXE"; relativeFiles = new[] { "EXCEL.EXE", @"root\Office16\EXCEL.EXE", @"Office16\EXCEL.EXE" }; break;
+                default: throw new ArgumentOutOfRangeException("key");
             }
-            if (!System.IO.File.Exists(candidate)) throw new InvalidOperationException("未找到程序文件，请选择正确的安装目录或 exe。");
-            string name = Path.GetFileName(candidate);
-            if (key == "wpsExe" && !name.Equals("et.exe", StringComparison.OrdinalIgnoreCase)) throw new InvalidOperationException("WPS表格请选择 office6 目录下的 et.exe。");
-            if (key == "excelExe" && !name.Equals("EXCEL.EXE", StringComparison.OrdinalIgnoreCase)) throw new InvalidOperationException("Excel请选择Microsoft Office目录下的EXCEL.EXE。");
-            if (key == "dmExe" && !name.Equals("launcher.exe", StringComparison.OrdinalIgnoreCase) && !name.Equals("DM-Native.exe", StringComparison.OrdinalIgnoreCase)) throw new InvalidOperationException("DM请选择 launcher.exe 或 DM-Native.exe。");
-            if (key == "dqExe" && name.IndexOf("DQ", StringComparison.OrdinalIgnoreCase) < 0) throw new InvalidOperationException("请选择中债DQ终端的 exe。");
-            return Path.GetFullPath(candidate);
+            string raw = Environment.ExpandEnvironmentVariables((input ?? "").Trim().Trim('"', '\u201c', '\u201d').Trim());
+            string select = "请点击「选择…」，选中" + expected + "。";
+            if (String.IsNullOrWhiteSpace(raw)) throw new InvalidOperationException(label + "：尚未填写路径。" + select);
+            try {
+                string candidate = Path.GetFullPath(raw);
+                var attributes = ReadAttributes(candidate);
+                if (!attributes.HasValue) throw new InvalidOperationException(label + "：找不到填写的路径。" + select);
+                if ((attributes.Value & FileAttributes.Directory) != 0) {
+                    string directory = candidate;
+                    candidate = null;
+                    if (key == "dqExe") {
+                        foreach (string file in Directory.EnumerateFiles(directory, "*.exe")) {
+                            if (!MatchesExecutable(key, Path.GetFileName(file))) continue;
+                            if (candidate != null) throw new InvalidOperationException(label + "：目录内有多个 DQ 程序。" + select);
+                            candidate = file;
+                        }
+                    } else {
+                        foreach (string relative in relativeFiles) {
+                            string file = Path.Combine(directory, relative);
+                            var fileAttributes = ReadAttributes(file);
+                            if (fileAttributes.HasValue && (fileAttributes.Value & FileAttributes.Directory) == 0) { candidate = file; break; }
+                        }
+                    }
+                    if (candidate == null) throw new InvalidOperationException(label + "：此文件夹中没有找到对应程序。" + select);
+                }
+                if (!MatchesExecutable(key, Path.GetFileName(candidate))) throw new InvalidOperationException(label + "：选中的文件与此栏不符。" + select);
+                return candidate;
+            } catch (UnauthorizedAccessException ex) {
+                throw new InvalidOperationException(label + "：Windows 拒绝访问此路径，请让 IT 核对权限。", ex);
+            } catch (System.Security.SecurityException ex) {
+                throw new InvalidOperationException(label + "：Windows 拒绝访问此路径，请让 IT 核对权限。", ex);
+            } catch (IOException ex) {
+                int code = ex.HResult & 0xffff;
+                if (code == 786 || code == 1260) throw new InvalidOperationException(label + "：Windows 策略限制访问此路径（错误 " + code + "），请联系 IT。", ex);
+                throw new InvalidOperationException(label + "：无法读取此路径。" + select, ex);
+            } catch (ArgumentException ex) {
+                throw new InvalidOperationException(label + "：路径格式不正确。" + select, ex);
+            } catch (NotSupportedException ex) {
+                throw new InvalidOperationException(label + "：路径格式不受支持。" + select, ex);
+            }
+        }
+        static bool MatchesExecutable(string key, string name) {
+            if (key == "dmExe") return name.Equals("launcher.exe", StringComparison.OrdinalIgnoreCase) || name.Equals("DM-Native.exe", StringComparison.OrdinalIgnoreCase);
+            if (key == "wpsExe") return name.Equals("et.exe", StringComparison.OrdinalIgnoreCase);
+            if (key == "excelExe") return name.Equals("EXCEL.EXE", StringComparison.OrdinalIgnoreCase);
+            return name.EndsWith(".exe", StringComparison.OrdinalIgnoreCase) && name.IndexOf("DQ", StringComparison.OrdinalIgnoreCase) >= 0 && !name.StartsWith("Uninstall", StringComparison.OrdinalIgnoreCase);
         }
         public static Dictionary<string, object> LastSuccess() {
             var result = Read(Path.Combine(DataDirectory, "last-success.json"));

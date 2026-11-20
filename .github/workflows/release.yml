@@ -58,7 +58,7 @@ jobs:
           $release = if ($found) { $found | ConvertFrom-Json }
           if ($release -and !$release.draft) { throw 'This version is already published' }
           if (!$release) {
-            gh release create $tag --repo $repo --verify-tag --draft --title "$tag · Windows x64" --notes '下载 Windows 免安装 ZIP，完整解压后运行“一级市场情绪指数.exe”。公开包不预置历史；新电脑可在历史交接中导入团队内部提供的 JSON。'
+            gh release create $tag --repo $repo --verify-tag --draft --title "$tag · Windows x64" --notes '下载 Windows 免安装 ZIP，完整解压后运行“一级市场情绪指数.exe”。如果自动检测报错（如 Windows 错误 786），可在设置中手动选择 DM、DQ 和 Excel/WPS 的程序文件后保存。公开包不预置历史；新电脑可通过历史交接导入团队内部提供的 JSON。'
             if ($LASTEXITCODE -ne 0) { throw 'Cannot create release draft' }
           }
           gh release upload $tag $env:RELEASE_ZIP $env:RELEASE_CHECKSUMS --clobber --repo $repo
