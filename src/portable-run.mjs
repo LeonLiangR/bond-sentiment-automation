@@ -61,8 +61,10 @@ try{
   else{
    const input=path.join(run,prefix+'-upload-rows.json'),upload=path.join(run,prefix+'-upload.xlsx');await fs.writeFile(input,JSON.stringify(batch.map((s,i)=>uploadRow(s,i+1))));await xlsx('upload',path.join(ROOT,'templates/dq-upload.xlsx'),input,upload);
    if((await fs.stat(upload)).size>51200)throw Error('DQ上传文件超过50KB');const form=new FormData();form.append('templateType','05');form.append('file',new Blob([await fs.readFile(upload)],{type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'}),path.basename(upload));await save(prefix+'-upload-response',await dq.request('search/calcPricingBatch/newUpload',form));
-   const general=(await dq.request('search/calcPricingBatch/newYbFxrList',{})).data,financial=(await dq.request('search/calcPricingBatch/newOtherFxrList',{})).data;if(financial.length)throw Error('DQ方案进入其他类型，请核对');bindings=bindUploaded(batch,general);await save(prefix+'-uploaded',general);
-   const rows=calculationRows(general);if(rows.length){await dq.request('api/user/functionMenu/v2/issuerBatchCalculate?size='+batch.length,undefined,'GET');await dq.request('search/calcPricingBatch/calcPricingRange',{batches:rows});}
+   const general=(await dq.request('search/calcPricingBatch/newYbFxrList',{})).data;await save(prefix+'-uploaded',general);
+   const financial=(await dq.request('search/calcPricingBatch/newOtherFxrList',{})).data;if(financial.length)throw Error('DQ方案进入其他类型，请核对');bindings=bindUploaded(batch,general);
+   for(const binding of bindings)if(binding.failureReason)await log('DQ定价失败，跳过：'+batch[binding.seq-1].name+'；'+binding.failureReason);
+   const rows=calculationRows(general,bindings);if(rows.length){await dq.request('api/user/functionMenu/v2/issuerBatchCalculate?size='+rows.length,undefined,'GET');await dq.request('search/calcPricingBatch/calcPricingRange',{batches:rows});}
    results=(await dq.request('search/calcPricingBatch/newYbFxrList',{})).data;await dq.request('api/user/functionMenu/v2/issuerBatchCalDownload',undefined,'GET');await fs.writeFile(path.join(run,prefix+'-raw-result.xlsx'),await dq.request('search/calcPricingBatch/newIssueBatchCalDownload',[{templateType:'05'},{templateType:'05'}],'POST',true));
   }
   await save(prefix+'-bindings',bindings);await save(prefix+'-results',results);const joined=joinResults(batch,bindings,results,date);valid.push(...joined.valid);excluded.push(...joined.excluded);await log(`DQ第${number}批：有效${joined.valid.length}，排除${joined.excluded.length}`);

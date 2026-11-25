@@ -1,5 +1,5 @@
 import test from 'node:test';import assert from 'node:assert/strict';
-import {filterSamples,scoreSpread,summarize,makeScenario,bindUploaded,joinResults,ASSET} from '../src/core.mjs';
+import {filterSamples,scoreSpread,summarize,makeScenario,bindUploaded,calculationRows,joinResults,ASSET} from '../src/core.mjs';
 test('筛选同时剔除空白和零，并保留重复简称的独立样本ID',()=>{const r=filterSamples([{row:9,name:'同名',type:'公司债券',coupon:.02},{row:10,name:'同名',type:'公司债券',coupon:.02},{row:11,name:'零',type:'公司债券',coupon:0},{row:12,name:'空',type:'公司债券',coupon:' '},{row:13,name:'排除',type:'超短期融资券(SCP)',coupon:.02}],'2026-11-12');assert.equal(r.samples.length,2);assert.notEqual(r.samples[0].sampleId,r.samples[1].sampleId);assert.equal(r.excluded.length,3);});
 test('斜坡计分边界和正负不对称',()=>{for(const[x,v]of [[-20,1],[-10,1],[-5,2/7],[-3,0],[0,0],[3,0],[5,-3/7],[10,-1.5],[20,-1.5]])assert.ok(Math.abs(scoreSpread(x)-v)<1e-12);assert.equal(scoreSpread(3.00000000003),0);assert.throws(()=>summarize([]),/没有有效/);assert.equal(summarize([{spread:3}]).bins[3],1);});
 const wind={code:'123456.SH',issuer:'某发行人有限公司',windType:'一般公司债',term:5,option:'3+2',subordinate:'否',green:'否',science:'是',guarantor:0};
@@ -26,4 +26,25 @@ test('恢复运行时重新核对方案指纹，拒绝关联表篡改和过期�
  assert.throws(()=>joinResults(scenarios,[{...bindings[0],sampleId:'id2'},bindings[1]],results,'2026-11-12'),/ID缺失或重复/);
  assert.throws(()=>joinResults(scenarios,[{...bindings[0],scenarioHash:'stale'},bindings[1]],results,'2026-11-12'),/当前提交方案不一致/);
  assert.throws(()=>joinResults(scenarios,bindings,[{...results[0],thematicBonds:'01'},results[1]],'2026-11-12'),/条件发生默认替换或错配/);
+});
+test('DQ未保留担保人或替换成其他机构时只跳过该券',()=>{
+ const guarantor='某融资担保集团有限公司';
+ const batch=[makeScenario({sampleId:'guaranteed',name:'有担保券',coupon:.02},{...wind,guarantor}),scenarios[1]];
+ const priced=row=>({...row,isCalculate:'1',valDate:'2026-11-12',prcMin:1.7,prcMax:1.9});
+ for(const wrong of [undefined,'E','0','其他担保公司']){
+  const uploaded=[{...rows[0],gutorNm:wrong},rows[1]].reverse(),bindings=bindUploaded(batch,uploaded);
+  assert.equal(bindings[0].matched,false);
+  assert.match(bindings[0].failureReason,/提交：某融资担保集团有限公司/);
+  assert.deepEqual(calculationRows(uploaded,bindings).map(r=>r.id),['row2']);
+  const joined=joinResults(batch,bindings,uploaded.map(priced),'2026-11-12');
+  assert.deepEqual(joined.valid.map(row=>row.sampleId),['id2']);
+  assert.equal(joined.excluded[0].sampleId,'guaranteed');
+  assert.equal(joined.excluded[0].reason,bindings[0].failureReason);
+  assert.equal(summarize(joined.valid).n,1);
+ }
+ const exact=[{...rows[0],gutorNm:guarantor},rows[1]],bindings=bindUploaded(batch,exact);
+ assert.deepEqual(calculationRows(exact,bindings).map(row=>row.id),['row1','row2']);
+ const changed=[{...rows[0],gutorNm:''},rows[1]].map(priced);
+ assert.match(joinResults(batch,bindings,changed,'2026-11-12').excluded[0].reason,/DQ返回：无担保/);
+ assert.throws(()=>bindUploaded(batch,[{...rows[0],gutorNm:'',term:9},rows[1]]),/条件发生默认替换或错配/);
 });

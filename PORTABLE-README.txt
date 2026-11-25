@@ -1,4 +1,6 @@
-一级市场情绪指数 · Excel/WPS双引擎 0.5.9
+一级市场情绪指数 · Excel/WPS双引擎 0.5.10
+
+0.5.10更新：DQ返回的担保人与提交值不一致时，将该券标为定价失败并记录差异。该券不参与试算或指数计算，其余符合校验的样本继续处理。
 
 Windows 10/11 64位，需安装DM、DQ，以及Microsoft Excel或WPS表格，具有相应表格软件的Wind插件、数据权限及DQ批量试算权限。只需安装所选表格软件，Excel模式不要求安装WPS。运行环境和界面字体随程序提供，无需Python、Node或额外字体安装。不能只复制exe，应保留同目录src、templates、runtime、assets和licenses。
 

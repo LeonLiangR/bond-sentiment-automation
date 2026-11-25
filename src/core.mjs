@@ -39,6 +39,10 @@ export function makeScenario(sample,wind){
 export function pricingScenarioHash(s){return createHash('sha256').update(JSON.stringify([s.issuer,s.guarantor,s.term,s.bondType,s.theme,s.issueMode,s.renewal,s.subordinate])).digest('hex');}
 export function uploadRow(s,seq){return [seq,s.issuer,s.guarantor||null,s.term,s.termUnit,s.bondType,s.theme,s.issueMode,s.renewal,s.subordinate];}
 const cleanName=v=>String(v??'').replace(/[()（）\s]/g,'');
+function guarantorName(value){
+ const name=String(value??'').trim();
+ return ['E','0'].includes(name)?'':name;
+}
 export function bindUploaded(scenarios,rows){
  if(rows.length!==scenarios.length)throw Error(`DQ上传记录数不一致：${rows.length}/${scenarios.length}`);
  const seqs=new Set(),ids=new Set(),batchIds=new Set();
@@ -48,23 +52,29 @@ export function bindUploaded(scenarios,rows){
   if(!Number.isInteger(seq)||!s||seqs.has(seq)||!r.id||ids.has(r.id)||!r.batchId)throw Error('DQ提交序号或记录ID缺失、重复');
   seqs.add(seq);ids.add(r.id);batchIds.add(r.batchId);
   if(cleanName(r.ptName)!==cleanName(s.issuer))throw Error('DQ发行人错配：'+s.name);
-  const normalized={seq,sampleId:s.sampleId,dqId:r.id,batchId:r.batchId,scenarioHash:s.scenarioHash,matched:r.isSuccess!=='0'};
+  const normalized={seq,sampleId:s.sampleId,dqId:r.id,batchId:r.batchId,scenarioHash:s.scenarioHash,matched:String(r.isSuccess)!=='0'};
   if(normalized.matched){
    const expected={term:s.term,termUnit:s.termUnit,assetDtlCategCode:ASSET[s.bondType],thematicBonds:THEMES[s.theme],issueMode:s.issueMode==='公募'?'1':'2',renewalFlg:s.renewal==='可续期'?'1':'0',secoFlg:s.subordinate==='次级'?'1':'0'};
    for(const [key,value]of Object.entries(expected))if(String(r[key])!==String(value))throw Error('DQ条件发生默认替换或错配：'+s.name+' / '+key);
-   if(s.guarantor&&cleanName(r.gutorNm)!==cleanName(s.guarantor))throw Error('DQ担保人不一致：'+s.name);
-   if(!s.guarantor&&r.gutorNm&&!['E','0'].includes(r.gutorNm))throw Error('DQ意外增加担保人：'+s.name);
+   const returned=guarantorName(r.gutorNm);
+   if(cleanName(returned)!==cleanName(s.guarantor)){
+    normalized.matched=false;
+    normalized.failureReason=`DQ担保人不一致（提交：${s.guarantor||'无担保'}；DQ返回：${returned||'无担保'}）`;
+   }
   }
   bindings.push(normalized);
  }
  if(batchIds.size!==1)throw Error('DQ返回多个批次，可能有其他操作同时修改工作列表');
  return bindings.sort((a,b)=>a.seq-b.seq);
 }
-export function calculationRows(rows){return rows.filter(r=>r.isSuccess!=='0').map((r,i)=>{
+export function calculationRows(rows,bindings){
+ const matched=new Set(bindings.filter(binding=>binding.matched).map(binding=>binding.dqId));
+ return rows.filter(r=>matched.has(r.id)).map((r,i)=>{
  const s={...r,type:'GENERAL',showNum:i,termType:'3',curValType:1};
  if(r.gutorId==='E'||r.gutorNm==='E')Object.assign(s,{needTransGuarType:true,guarType:'0',gutorId:null,gutorNm:null,gutorOptions:[],gutorDisabled:true});
  return omitEmpty(s);
-});}
+ });
+}
 function omitEmpty(v){return Array.isArray(v)?v.map(omitEmpty):v&&typeof v==='object'?Object.fromEntries(Object.entries(v).filter(([,x])=>x!==null&&x!=='').map(([k,x])=>[k,omitEmpty(x)])):v;}
 export function joinResults(scenarios,bindings,results,date){
  if(results.length!==bindings.length)throw Error('DQ计算前后记录数发生变化');
@@ -77,7 +87,8 @@ export function joinResults(scenarios,bindings,results,date){
   const s=scenarioMap.get(b.sampleId),r=resultMap.get(b.batchId+':'+b.dqId);
   if(!r||Number(r.orderNum)!==b.seq||cleanName(r.ptName)!==cleanName(s.issuer))throw Error('DQ返回结果标识或发行人发生变化');
   const item={...s,dq:r,binding:b};
-  if(!b.matched||r.isSuccess==='0'){excluded.push({...item,stage:'DQ',reason:'发行人匹配失败'});continue;}
+  const current=bySeq.get(b.seq);
+  if(!b.matched||!current.matched){excluded.push({...item,stage:'DQ',reason:b.failureReason||current.failureReason||'发行人匹配失败'});continue;}
   if(r.isCalculate==='0'||!Number.isFinite(r.prcMin)||!Number.isFinite(r.prcMax)||r.prcMin<=0||r.prcMin>r.prcMax){excluded.push({...item,stage:'DQ',reason:'暂不支持定价或无有效区间'});continue;}
   if(r.valDate!==date)throw Error(`DQ估值日期${r.valDate}与业务日期${date}不一致，停止发布`);
   const center=(r.prcMin+r.prcMax)/2,spread=roundBP((s.coupon*100-center)*100);
