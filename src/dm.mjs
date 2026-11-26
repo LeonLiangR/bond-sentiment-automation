@@ -8,6 +8,7 @@ export function dmPageModules(page=document){
  return function findExport(label,service,endpoint,select){
   const matchesPath=source=>["'",'"',"`","${"].some(suffix=>source.includes(endpoint+suffix));
   const candidates=factories.filter(([,source])=>source.includes(service)&&matchesPath(source));
+  if(!candidates.length)throw Error('DM模块尚未加载：'+label);
   if(candidates.length===1){
    const selected=select(runtime(candidates[0][0]),matchesPath);
    if(selected)return selected;
@@ -49,6 +50,7 @@ export async function waitForDmResearch(date,{coldStart=false,beforeAttempt=asyn
   if(delay>0)await sleep(delay);
  }
  const detail=last?.code==='ENOENT'?'未检测到本地会话端口':last?.message?.replace(/^Error: /,'');
+ if(/^DM模块尚未加载：/.test(detail||''))throw Error(`已等待约${budget/1000}秒，仍未找到DM兼容的查询模块：${detail.split('：')[1]}。请在DM中确认资讯页面可正常打开；若仍失败，可能需要更新适配。`,{cause:last});
  throw Error(`DM在约${budget/1000}秒内未就绪${detail?'：'+detail:''}。请正常打开DM，确认能进入行情或资讯页面后重试。`,{cause:last});
 }
 async function pageResearch(date,loadModules){

@@ -106,10 +106,10 @@ export function summarize(valid){
  const sum=scores.reduce((a,b)=>a+b,0),mean=sum/n,variance=n<2?null:scores.reduce((a,x)=>a+(x-mean)**2,0)/(n-1);
  return {n,bins,scoreSum:sum,mean,index:50+25*mean,oldIndex:50+bins[0]+bins[1]*.5-bins[3]*.5-bins[4]-bins[5]*1.5,confidence:n>=25?'正常':n>=15?'样本偏少':'低置信',se:variance===null?null:25*Math.sqrt(variance/n),netLow:(bins[0]+bins[1]-bins[3]-bins[4]-bins[5])/n,negative:spreads.filter(x=>x<0).length,zero:spreads.filter(x=>x===0).length,positive:spreads.filter(x=>x>0).length,negative10:spreads.filter(x=>x<=-10).length,positiveMin:spreads.some(x=>x>0)?Math.min(...spreads.filter(x=>x>0)):null,positiveMax:spreads.some(x=>x>0)?Math.max(...spreads.filter(x=>x>0)):null};
 }
-export function makeNarrative(date,s,history){
- const [y,m,d]=date.split('-').map(Number),previous=history.filter(h=>h.date<date&&typeof h.index==='number').at(-1),parts=[`${m}月${d}日可统计公司债券、中期票据、定向工具及证券公司债样本共计${s.n}只债券，市场价格情绪指数为${s.index.toFixed(2)}。`];
- if(previous){const delta=s.index-previous.index,change=Math.abs(delta).toFixed(2);parts.push(change==='0.00'?'较上一有效统计日基本持平。':`较上一有效统计日${delta>0?'上升':'下降'}${change}点，发行定价情绪${delta>0?'有所改善':'有所转弱'}。`);}
- parts.push(`从具体估值偏离幅度看，低估值发行${s.negative}只，其中低估值10BP及以上${s.negative10}只；平估值发行${s.zero}只；高估值发行${s.positive}只${s.positive?`，偏离${s.positiveMin}—${s.positiveMax}BP`:''}。高估值3—5BP共${s.bins[3]}只，5—10BP共${s.bins[4]}只，10BP及以上共${s.bins[5]}只。`);
+export function makeNarrative(date,s){
+ const [,m,d]=date.split('-').map(Number),parts=[`${m}月${d}日可统计公司债券、中期票据、定向工具及证券公司债样本共计${s.n}只债券，市场价格情绪指数为${s.index.toFixed(2)}。`];
+ const flat=s.zero>0?`平估值发行${s.zero}只；`:'';
+ parts.push(`从具体估值偏离幅度看，低估值发行${s.negative}只，其中低估值10BP及以上${s.negative10}只；${flat}高估值发行${s.positive}只${s.positive?`，偏离${s.positiveMin}—${s.positiveMax}BP`:''}。高估值3—5BP共${s.bins[3]}只，5—10BP共${s.bins[4]}只，10BP及以上共${s.bins[5]}只。`);
  if(s.n<25)parts.push(`当日${s.confidence}，指数仅供参考。`);
  return parts.join('');
 }

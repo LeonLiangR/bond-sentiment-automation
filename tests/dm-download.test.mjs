@@ -16,6 +16,22 @@ test('DM模块编号变化后按精确路径识别，不执行其他服务或相
  assert.equal(find(),expected);assert.deepEqual(loaded,['142387']);
  modules[99]=modules[142387];
  assert.throws(find,/无法唯一识别个券搜索/);assert.equal(loaded.length,1);
+ delete modules[99];delete modules[142387];
+ assert.throws(find,/DM模块尚未加载：个券搜索/);assert.equal(loaded.length,1);
+});
+
+test('DM页面已打开但研究资讯模块延迟加载时继续等待；匹配歧义立即停止',async()=>{
+ let elapsed=0,calls=0;
+ const retry=[];
+ const options={coldStart:true,now:()=>elapsed,sleep:async delay=>{elapsed+=delay;},onRetry:async message=>retry.push(message)};
+ const result=await waitForDmResearch('2026-11-24',{...options,query:async()=>{
+  calls++;
+  if(elapsed<8000)throw Error('Error: DM模块尚未加载：研究资讯查询');
+  return article;
+ }});
+ assert.equal(result,article);assert.equal(calls,3);
+ assert.ok(retry.every(message=>message.includes('DM模块尚未加载：研究资讯查询')));
+ await assert.rejects(waitForDmResearch('2026-11-24',{...options,query:async()=>{throw Error('DM模块版本已变化：无法唯一识别研究资讯查询');},sleep:async()=>assert.fail('不能在歧义时继续查询')}),/无法唯一识别/);
 });
 test('网络短暂断开后重试，成功文件内容不变',async()=>{const dir=await fs.mkdtemp(path.join(os.tmpdir(),'dm-download-'));let calls=0;const logs=[];try{const result=await downloadDmArticle(article,'2026-11-13',dir,{sleep:async()=>{},onRetry:async m=>logs.push(m),fetchImpl:async()=>{if(++calls<3)throw new TypeError('fetch failed',{cause:Object.assign(Error('socket reset'),{code:'ECONNRESET'})});return new Response(new Uint8Array([80,75,3,4]));}});assert.equal(calls,3);assert.equal(logs.length,2);assert.equal(result.bytes,4);assert.deepEqual([...await fs.readFile(result.file)],[80,75,3,4]);}finally{await fs.rm(dir,{recursive:true,force:true});}});
 test('下载重试耗尽显示底层原因；权限错误不重复请求',async()=>{let calls=0;await assert.rejects(downloadDmArticle(article,'2026-11-13',os.tmpdir(),{sleep:async()=>{},fetchImpl:async()=>{calls++;throw new TypeError('fetch failed',{cause:Object.assign(Error('connection refused'),{code:'ECONNREFUSED'})});}}),/第3次.*ECONNREFUSED/);assert.equal(calls,3);calls=0;await assert.rejects(downloadDmArticle(article,'2026-11-13',os.tmpdir(),{sleep:async()=>{},fetchImpl:async()=>{calls++;return new Response('',{status:403});}}),/HTTP 403/);assert.equal(calls,1);});

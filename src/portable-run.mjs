@@ -70,7 +70,7 @@ try{
   await save(prefix+'-bindings',bindings);await save(prefix+'-results',results);const joined=joinResults(batch,bindings,results,date);valid.push(...joined.valid);excluded.push(...joined.excluded);await log(`DQ第${number}批：有效${joined.valid.length}，排除${joined.excluded.length}`);
  }
  phase='指数计算';await log('[6/8] 计算逐券利差、得分及当日情绪指数');valid.sort((a,b)=>a.sourceRow-b.sourceRow);const summary=summarize(valid),history=await readReportHistory(path.join(ROOT,'assets','history-seed.json'),path.join(dataDir,'history.json'),date);
- data={date,valid,sampleA,excluded,summary,raw,article,history,reportText:makeNarrative(date,summary,history)};const plan=buildReportPlan(data);data.history=plan.historyObjects;await save('result',data);await save('report-plan',plan);await canceled();
+ data={date,valid,sampleA,excluded,summary,raw,article,history,reportText:makeNarrative(date,summary)};const plan=buildReportPlan(data);data.history=plan.historyObjects;await save('result',data);await save('report-plan',plan);await canceled();
  phase='报表输出';await log('[7/8] 生成五个sheet、文字与图片，并在'+office.name+'核验公式');const compact=date.replaceAll('-',''),image=path.join(output,'汇报图片_'+compact+'.png'),file=path.join(output,'当日报告_'+compact+'.xlsx');
  await command(path.join(ROOT,'runtime','ChartRenderer.exe'),['--plot',path.join(run,'result.json'),image],120000,'plot');
  const prepared=path.join(run,'prepared-report.xlsx');await xlsx('report',path.join(ROOT,'templates/report-five.xlsx'),path.join(run,'report-plan.json'),prepared);
